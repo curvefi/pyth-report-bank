@@ -74,12 +74,18 @@ def test_recorded_update_is_refused_when_not_authentic(bank):
         assert bank.latest(feed_id, CHANNEL) == (0, 0)
 
 
-def test_recorded_update_delivered_late_is_skipped(bank):
+def test_recorded_update_is_stored_late_but_not_early(bank):
+    data = pyth.update_bytes(RECORDED)
     set_clock(RECORDED)
-    boa.env.time_travel(seconds=13)
-    bank.deliver_single_report(pyth.update_bytes(RECORDED), value=FEE)
-    for feed_id in pyth.FEEDS.values():
-        assert bank.latest(feed_id, CHANNEL) == (0, 0)
+    # More than 6 s before its message time it is refused.
+    boa.env.time_travel(seconds=-8)
+    with boa.reverts("message time"):
+        bank.deliver_single_report(data, value=FEE)
+    # An hour late it is still stored: readers bound the age.
+    boa.env.time_travel(seconds=8 + 3_600)
+    bank.deliver_single_report(data, value=FEE)
+    for feed_id, report in reports(RECORDED).items():
+        assert bank.latest(feed_id, CHANNEL) == report
 
 
 @pytest.mark.skipif(not pyth.api_key(), reason="needs PYTH_API_KEY")

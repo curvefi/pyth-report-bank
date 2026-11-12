@@ -79,20 +79,23 @@ def test_each_feed_is_stored_or_skipped_on_its_own(bank):
             (397, -5, -8, t1),  # negative price
             (588, 7, 1, t1),  # exponent above 0
             (631, 7, -19, t1),  # exponent below -18
-            feed(2_000, WAD, t1 - 12_000_001),  # too old
+            feed(2_000, WAD, t1 - 3_600_000_000),  # an hour old, but new to its stream: stored
         )
-        assert [log.feed_id for log in logs] == [BTC]
+        assert [log.feed_id for log in logs] == [BTC, 2_000]
         assert bank.latest(BTC, CHANNEL) == (70_000 * WAD, t1)
+        assert bank.latest(2_000, CHANNEL) == (WAD, t1 - 3_600_000_000)
         # Skipped feeds keep their stored reports.
         assert bank.latest(ETH, CHANNEL) == (3_000 * WAD, t)
         assert bank.latest(103, CHANNEL) == (WAD, t - 1_000_000)
-        for skipped in (397, 588, 631, 2_000):
+        for skipped in (397, 588, 631):
             assert bank.latest(skipped, CHANNEL) == (0, 0)
         # A delivery with nothing new succeeds and stores nothing.
         assert deliver(bank, feed(ETH, 3_200 * WAD, t)) == []
-    # Sixteen feeds fit one update.
-    deliver(bank, *[feed(1_000 + k, (k + 1) * WAD, t) for k in range(16)])
-    assert bank.latest(1_015, CHANNEL) == (16 * WAD, t)
+    # Eight feeds fit one update; nine do not decode.
+    deliver(bank, *[feed(1_000 + k, (k + 1) * WAD, t) for k in range(8)])
+    assert bank.latest(1_007, CHANNEL) == (8 * WAD, t)
+    with boa.reverts():
+        deliver(bank, *[feed(2_000 + k, WAD, t) for k in range(9)])
 
 
 def test_prices_scale_to_18_decimals(bank):
@@ -102,7 +105,7 @@ def test_prices_scale_to_18_decimals(bank):
         (BTC, 7_385_842_700_888, -8, t),
         (ETH, 1, -18, t),
         (103, 1, 0, t),
-        (397, 2**63 - 1, 0, t),  # the largest mantissa packs beside a 64-bit time
+        (397, 2**63 - 1, 0, t),  # the largest mantissa
     )
     assert bank.latest(BTC, CHANNEL) == (73_858_427_008_880_000_000_000, t)
     assert bank.latest(ETH, CHANNEL) == (1, t)
@@ -110,13 +113,13 @@ def test_prices_scale_to_18_decimals(bank):
     assert bank.latest(397, CHANNEL) == ((2**63 - 1) * WAD, t)
 
 
-def test_admission_windows(bank):
+def test_only_messages_from_the_future_are_refused(bank):
     t = now_us()
-    # An observation exactly 12 s old is admitted, one microsecond older is not.
-    deliver(bank, feed(BTC, WAD, t - 12_000_001), message_us=t)
-    assert bank.latest(BTC, CHANNEL) == (0, 0)
-    deliver(bank, feed(BTC, WAD, t - 12_000_000), message_us=t)
-    assert bank.latest(BTC, CHANNEL) == (WAD, t - 12_000_000)
+    # No maximum age: any observation newer than its stream's is stored.
+    deliver(bank, feed(BTC, WAD, t - 86_400_000_000), message_us=t)
+    assert bank.latest(BTC, CHANNEL) == (WAD, t - 86_400_000_000)
+    deliver(bank, feed(BTC, 2 * WAD, t - 12_000_000), message_us=t)
+    assert bank.latest(BTC, CHANNEL) == (2 * WAD, t - 12_000_000)
     # A message up to 6 s ahead of the block is admitted, its observations too.
     deliver(bank, feed(ETH, WAD, t + 6_000_000))
     assert bank.latest(ETH, CHANNEL) == (WAD, t + 6_000_000)
@@ -125,9 +128,9 @@ def test_admission_windows(bank):
     # An observation may equal its message time but not pass it.
     with boa.reverts("observation time"):
         bank.deliver_single_report(update([feed(103, WAD, t)], message_us=t - 1), value=FEE)
-    # The windows apply at delivery only: a stored report never expires.
+    # A stored report never expires.
     boa.env.time_travel(seconds=86_400)
-    assert bank.latest(BTC, CHANNEL) == (WAD, t - 12_000_000)
+    assert bank.latest(BTC, CHANNEL) == (2 * WAD, t - 12_000_000)
 
 
 def test_malformed_updates_revert_as_a_whole(bank):
@@ -137,7 +140,7 @@ def test_malformed_updates_revert_as_a_whole(bank):
     for data, reason in (
         (b"\x00" + good[1:], "payload magic"),
         (good[:13] + b"\x00", "feed count"),
-        (good[:13] + b"\x11" + entry, "feed count"),
+        (good[:13] + b"\x09" + entry, "feed count"),
         (good[:13] + b"\x02" + entry, "payload length"),
         (good + b"\x00", "payload length"),
         (good[:18] + b"\x04" + good[19:], "price property"),
@@ -155,7 +158,11 @@ def test_malformed_updates_revert_as_a_whole(bank):
     ):
         with boa.reverts(reason):
             bank.deliver_single_report(update([feed(ETH, WAD, t), second], message_us=t), value=FEE)
+    # Nothing may follow the payload, though Pyth's verifier would ignore it.
+    with boa.reverts("update length"):
+        bank.deliver_single_report(sign(good) + b"\x00", value=FEE)
     assert bank.latest(ETH, CHANNEL) == (0, 0)
+    assert bank.latest(BTC, CHANNEL) == (0, 0)
 
 
 def test_unverified_updates_store_nothing(bank):
@@ -166,14 +173,18 @@ def test_unverified_updates_store_nothing(bank):
         (sign(payload([feed(BTC, WAD, t)]), stranger), FEE, "invalid signer"),
         (good[:-1] + bytes([good[-1] ^ 1]), FEE, "invalid signer"),  # tampered payload
         (b"\x00" + good[1:], FEE, "invalid evm magic"),
-        (good, FEE - 1, "Insufficient fee provided"),
+        # Exactly the fee: the bank could not take back a refund of the excess.
+        (good, FEE - 1, "fee"),
+        (good, FEE + 1, "fee"),
     ):
         with boa.reverts(reason):
             bank.deliver_single_report(data, value=value)
     assert bank.latest(BTC, CHANNEL) == (0, 0)
+    assert boa.env.get_balance(bank.verifier()) == 0
     # A verifier that names no signer is refused too.
     signerless = boa.loads(
-        "@external\n@payable\ndef verifyUpdate(u: Bytes[517]) -> (Bytes[517], address):\n"
+        f"@external\n@view\ndef verification_fee() -> uint256:\n    return {FEE}\n"
+        "@external\n@payable\ndef verifyUpdate(u: Bytes[301]) -> (Bytes[301], address):\n"
         "    return slice(u, 71, len(u) - 71), empty(address)"
     )
     bank.set_verifier(signerless.address)
@@ -269,6 +280,7 @@ def test_decode_reads_one_feed_without_verifying(bank):
         ((data, BTC, 1), "channel"),
         ((update([feed(BTC, WAD, t), feed(BTC, WAD, t)]), BTC, CHANNEL), "duplicate feed"),
         ((update([feed(BTC, WAD, t)], message_us=t - 1), BTC, CHANNEL), "observation time"),
+        ((b"\x00" + data[1:], BTC, CHANNEL), "evm magic"),
         ((data + b"\x00", BTC, CHANNEL), "update length"),
         (
             (data[:69] + (len(data) - 72).to_bytes(2, "big") + data[71:-1], BTC, CHANNEL),

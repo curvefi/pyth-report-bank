@@ -9,7 +9,7 @@
         or fee administration; the constructor sets one trusted signer.
 """
 
-MAX_UPDATE_BYTES: constant(uint256) = 517  # PythReportBank's largest update (16 feeds)
+MAX_UPDATE_BYTES: constant(uint256) = 301  # PythReportBank's largest update (8 feeds)
 EVM_FORMAT_MAGIC: constant(uint256) = 706910618  # 0x2a22999a
 # secp256k1 order // 2: OpenZeppelin rejects signatures with a larger s.
 HALF_CURVE_ORDER: constant(uint256) = (
