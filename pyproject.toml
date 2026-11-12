@@ -1,0 +1,23 @@
+[project]
+name = "report-bank"
+version = "0.1.0"
+requires-python = ">=3.12"
+dependencies = [
+    "snekmate>=0.1.2",
+    "vyper==0.4.3",
+]
+
+[dependency-groups]
+dev = [
+    "pytest>=9.2.0",
+    "python-dotenv>=1.2.4",
+    "titanoboa>=0.2.8",
+]
+
+[tool.pytest.ini_options]
+pythonpath = ["."]
+testpaths = ["tests"]
+
+[tool.ruff]
+line-length = 100
+extend-exclude = [".aichord"]

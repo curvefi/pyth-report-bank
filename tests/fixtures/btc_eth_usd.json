@@ -1,0 +1,23 @@
+{
+  "parsed": {
+    "timestampUs": "1794348561000000",
+    "priceFeeds": [
+      {
+        "priceFeedId": 1,
+        "price": "7385842700888",
+        "exponent": -8,
+        "feedUpdateTimestamp": 1794348561000000
+      },
+      {
+        "priceFeedId": 2,
+        "price": "205717841552",
+        "exponent": -8,
+        "feedUpdateTimestamp": 1794348561000000
+      }
+    ]
+  },
+  "evm": {
+    "encoding": "hex",
+    "data": "2a22999a960277502dd63229b12e7296bd0e353a02928ae3cac8c2644fe97c3cfb4087a900184df9f57a8cdd2053867d917baf6cb15d0fd3b22315043a8c40d3a3d6d2be00004493c7d37500065ff35494e6400402000000010300000006b7a687d25804fff80c0100065ff35494e6400000000203000000002fe5bd269004fff80c0100065ff35494e640"
+  }
+}
