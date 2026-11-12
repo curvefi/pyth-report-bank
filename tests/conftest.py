@@ -23,20 +23,32 @@ def now_us():
     return boa.env.evm.patch.timestamp * 1_000_000
 
 
-def feed(feed_id, price, observation_us=None, exponent=-8):
-    """One feed entry; price in 1e18, encoded as a mantissa at `exponent`."""
+def feed(feed_id, price, observation_us=None, exponent=-8, ema_price=None):
+    """One feed entry; prices in 1e18, encoded as mantissas at `exponent`. The EMA
+    price defaults to the price."""
     mantissa = price // 10 ** (18 + exponent)
-    return (feed_id, mantissa, exponent, now_us() if observation_us is None else observation_us)
+    ema = mantissa if ema_price is None else ema_price // 10 ** (18 + exponent)
+    return (
+        feed_id,
+        mantissa,
+        exponent,
+        now_us() if observation_us is None else observation_us,
+        ema,
+    )
 
 
 def payload(feeds, message_us=None, channel=CHANNEL):
-    """A Pyth Lazer payload with the properties price, exponent, feed update time."""
+    """A Pyth Lazer payload with the properties price, exponent, EMA price and feed
+    update time. Entries are (id, mantissa, exponent, observation us[, EMA mantissa]);
+    the EMA mantissa defaults to the price's."""
     if message_us is None:
         message_us = max(entry[3] for entry in feeds)
     data = struct.pack(">IQBB", PAYLOAD_MAGIC, message_us, channel, len(feeds))
-    for feed_id, mantissa, exponent, observation_us in feeds:
+    for feed_id, mantissa, exponent, observation_us, *ema in feeds:
+        ema_mantissa = ema[0] if ema else mantissa
         data += struct.pack(
-            ">IBBqBhBBQ", feed_id, 3, 0, mantissa, 4, exponent, 12, 1, observation_us
+            ">IBBqBhBqBBQ",
+            *(feed_id, 4, 0, mantissa, 4, exponent, 10, ema_mantissa, 12, 1, observation_us),
         )
     return data
 

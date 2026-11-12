@@ -2,6 +2,8 @@
 future-message check, streams, scaling, malformed input, batches, fees, decoding
 and governance."""
 
+import struct
+
 import boa
 from conftest import (
     BANK,
@@ -34,9 +36,9 @@ def deliver(bank, *feeds, value=FEE, **kwargs):
 
 def test_a_stream_advances_only_on_newer_observations(bank):
     t = now_us()
-    assert bank.latest(BTC, CHANNEL) == (0, 0)
+    assert bank.latest(BTC, CHANNEL) == (0, 0, 0)
     (log,) = deliver(bank, feed(BTC, 70_000 * WAD, t - 1_000_000), message_us=t)
-    assert bank.latest(BTC, CHANNEL) == (70_000 * WAD, t - 1_000_000)
+    assert bank.latest(BTC, CHANNEL) == (70_000 * WAD, t - 1_000_000, 70_000 * WAD)
     assert (log.feed_id, log.channel, log.price, log.observation_us) == (
         BTC,
         CHANNEL,
@@ -47,11 +49,11 @@ def test_a_stream_advances_only_on_newer_observations(bank):
     # later message.
     for observation in (t - 1_000_000, t - 2_000_000):
         assert deliver(bank, feed(BTC, 71_000 * WAD, observation), message_us=t) == []
-        assert bank.latest(BTC, CHANNEL) == (70_000 * WAD, t - 1_000_000)
+        assert bank.latest(BTC, CHANNEL) == (70_000 * WAD, t - 1_000_000, 70_000 * WAD)
     # Only the observation counts: a newer one is stored even in a message older
     # than the accepted one's.
     deliver(bank, feed(BTC, 71_000 * WAD, t - 500_000))
-    assert bank.latest(BTC, CHANNEL) == (71_000 * WAD, t - 500_000)
+    assert bank.latest(BTC, CHANNEL) == (71_000 * WAD, t - 500_000, 71_000 * WAD)
 
 
 def test_streams_are_separate_per_feed_and_channel(bank):
@@ -60,10 +62,10 @@ def test_streams_are_separate_per_feed_and_channel(bank):
     # An older observation on another channel starts that channel's own stream.
     deliver(bank, feed(BTC, 90_000 * WAD, t - 1_000_000), channel=1)
     deliver(bank, feed(ETH, 3_000 * WAD, t - 1_000_000))
-    assert bank.latest(BTC, CHANNEL) == (70_000 * WAD, t)
-    assert bank.latest(BTC, 1) == (90_000 * WAD, t - 1_000_000)
-    assert bank.latest(ETH, CHANNEL) == (3_000 * WAD, t - 1_000_000)
-    assert bank.latest(ETH, 1) == (0, 0)
+    assert bank.latest(BTC, CHANNEL) == (70_000 * WAD, t, 70_000 * WAD)
+    assert bank.latest(BTC, 1) == (90_000 * WAD, t - 1_000_000, 90_000 * WAD)
+    assert bank.latest(ETH, CHANNEL) == (3_000 * WAD, t - 1_000_000, 3_000 * WAD)
+    assert bank.latest(ETH, 1) == (0, 0, 0)
 
 
 def test_each_feed_is_stored_or_skipped_on_its_own(bank):
@@ -83,23 +85,47 @@ def test_each_feed_is_stored_or_skipped_on_its_own(bank):
             feed(2_000, WAD, t1 - 3_600_000_000),  # an hour old, but new to its stream: stored
         )
         assert [log.feed_id for log in logs] == [BTC, 2_000]
-        assert bank.latest(BTC, CHANNEL) == (70_000 * WAD, t1)
-        assert bank.latest(2_000, CHANNEL) == (WAD, t1 - 3_600_000_000)
+        assert bank.latest(BTC, CHANNEL) == (70_000 * WAD, t1, 70_000 * WAD)
+        assert bank.latest(2_000, CHANNEL) == (WAD, t1 - 3_600_000_000, WAD)
         # Skipped feeds keep their stored reports.
-        assert bank.latest(ETH, CHANNEL) == (3_000 * WAD, t)
-        assert bank.latest(103, CHANNEL) == (WAD, t - 1_000_000)
+        assert bank.latest(ETH, CHANNEL) == (3_000 * WAD, t, 3_000 * WAD)
+        assert bank.latest(103, CHANNEL) == (WAD, t - 1_000_000, WAD)
         for skipped in (397, 588, 631):
-            assert bank.latest(skipped, CHANNEL) == (0, 0)
+            assert bank.latest(skipped, CHANNEL) == (0, 0, 0)
         # A delivery with nothing new succeeds and stores nothing.
         assert deliver(bank, feed(ETH, 3_200 * WAD, t)) == []
     # Eight feeds fit one update, and each lands in its own stream; nine do not decode.
     eight = update([feed(1_000 + k, (k + 1) * WAD, t - k) for k in range(8)], message_us=t)
     bank.deliver_single_report(eight, value=FEE)
     for k in range(8):
-        assert bank.latest(1_000 + k, CHANNEL) == ((k + 1) * WAD, t - k)
-        assert bank.decode(eight, 1_000 + k, CHANNEL) == ((k + 1) * WAD, t - k)
+        assert bank.latest(1_000 + k, CHANNEL) == ((k + 1) * WAD, t - k, (k + 1) * WAD)
+        assert bank.decode(eight, 1_000 + k, CHANNEL) == ((k + 1) * WAD, t - k, (k + 1) * WAD)
     with boa.reverts():
         deliver(bank, *[feed(2_000 + k, WAD, t) for k in range(9)])
+
+
+def test_the_ema_price_is_stored_with_the_price(bank):
+    t = now_us()
+    # It shares the price's exponent, so it scales the same way.
+    (log,) = deliver(bank, feed(BTC, 70_000 * WAD, t - 1, ema_price=69_500 * WAD))
+    assert bank.latest(BTC, CHANNEL) == (70_000 * WAD, t - 1, 69_500 * WAD)
+    assert (log.price, log.observation_us, log.ema_price) == (70_000 * WAD, t - 1, 69_500 * WAD)
+    # A feed is stored only with both prices: a zero or negative EMA price skips
+    # it, keeping the stream's whole report, while the update's other feeds land.
+    logs = deliver(
+        bank,
+        (BTC, 7_100_000_000_000, -8, t, 0),
+        (ETH, 300_000_000_000, -8, t, -1),
+        feed(103, WAD, t, ema_price=2 * WAD),
+    )
+    assert [log.feed_id for log in logs] == [103]
+    assert bank.latest(BTC, CHANNEL) == (70_000 * WAD, t - 1, 69_500 * WAD)
+    assert bank.latest(ETH, CHANNEL) == (0, 0, 0)
+    assert bank.latest(103, CHANNEL) == (WAD, t, 2 * WAD)
+    # decode returns it third, and 0 for both prices of a feed delivery would skip.
+    data = update([(BTC, 7_100_000_000_000, -8, t, 7_050_000_000_000), (ETH, 1, -8, t, 0)])
+    assert bank.decode(data, BTC, CHANNEL) == (71_000 * WAD, t, 70_500 * WAD)
+    assert bank.decode(data, ETH, CHANNEL) == (0, t, 0)
 
 
 def test_prices_scale_to_18_decimals(bank):
@@ -111,22 +137,26 @@ def test_prices_scale_to_18_decimals(bank):
         (103, 1, 0, t),
         (397, 2**63 - 1, 0, t),  # the largest mantissa
     )
-    assert bank.latest(BTC, CHANNEL) == (73_858_427_008_880_000_000_000, t)
-    assert bank.latest(ETH, CHANNEL) == (1, t)
-    assert bank.latest(103, CHANNEL) == (WAD, t)
-    assert bank.latest(397, CHANNEL) == ((2**63 - 1) * WAD, t)
+    assert bank.latest(BTC, CHANNEL) == (
+        73_858_427_008_880_000_000_000,
+        t,
+        73_858_427_008_880_000_000_000,
+    )
+    assert bank.latest(ETH, CHANNEL) == (1, t, 1)
+    assert bank.latest(103, CHANNEL) == (WAD, t, WAD)
+    assert bank.latest(397, CHANNEL) == ((2**63 - 1) * WAD, t, (2**63 - 1) * WAD)
 
 
 def test_only_messages_from_the_future_are_refused(bank):
     t = now_us()
     # No maximum age: any observation newer than its stream's is stored.
     deliver(bank, feed(BTC, WAD, t - 86_400_000_000), message_us=t)
-    assert bank.latest(BTC, CHANNEL) == (WAD, t - 86_400_000_000)
+    assert bank.latest(BTC, CHANNEL) == (WAD, t - 86_400_000_000, WAD)
     deliver(bank, feed(BTC, 2 * WAD, t - 12_000_000), message_us=t)
-    assert bank.latest(BTC, CHANNEL) == (2 * WAD, t - 12_000_000)
+    assert bank.latest(BTC, CHANNEL) == (2 * WAD, t - 12_000_000, 2 * WAD)
     # A message up to 6 s ahead of the block is admitted, its observations too.
     deliver(bank, feed(ETH, WAD, t + 6_000_000))
-    assert bank.latest(ETH, CHANNEL) == (WAD, t + 6_000_000)
+    assert bank.latest(ETH, CHANNEL) == (WAD, t + 6_000_000, WAD)
     with boa.reverts("message time"):
         bank.deliver_single_report(update([feed(103, WAD, t)], message_us=t + 6_000_001), value=FEE)
     # An observation may equal its message time but not pass it.
@@ -134,7 +164,7 @@ def test_only_messages_from_the_future_are_refused(bank):
         bank.deliver_single_report(update([feed(103, WAD, t)], message_us=t - 1), value=FEE)
     # A stored report never expires.
     boa.env.time_travel(seconds=86_400)
-    assert bank.latest(BTC, CHANNEL) == (2 * WAD, t - 12_000_000)
+    assert bank.latest(BTC, CHANNEL) == (2 * WAD, t - 12_000_000, 2 * WAD)
 
 
 def test_malformed_updates_revert_as_a_whole(bank):
@@ -147,9 +177,13 @@ def test_malformed_updates_revert_as_a_whole(bank):
         (good[:13] + b"\x09" + entry, "feed count"),
         (good[:13] + b"\x02" + entry, "payload length"),
         (good + b"\x00", "payload length"),
-        (good[:18] + b"\x04" + good[19:], "price property"),
+        # Feed offsets are 14 + the byte table's: count 18, exponent 28, EMA 31, presence 41.
+        (good[:18] + b"\x03" + good[19:], "price property"),
         (good[:28] + b"\x05" + good[29:], "exponent property"),
-        (good[:32] + b"\x00" + good[33:], "observation property"),
+        (good[:31] + b"\x0b" + good[32:], "ema property"),
+        (good[:41] + b"\x00" + good[42:], "observation property"),
+        # The old three-property format, without the EMA price.
+        (good[:14] + struct.pack(">IBBqBhBBQ", BTC, 3, 0, 1, 4, -8, 12, 1, t), "payload length"),
         (payload([feed(BTC, WAD, t), feed(BTC, WAD, t - 1)]), "duplicate feed"),
     ):
         with boa.reverts(reason):
@@ -165,8 +199,8 @@ def test_malformed_updates_revert_as_a_whole(bank):
     # Nothing may follow the payload, though Pyth's verifier would ignore it.
     with boa.reverts("update length"):
         bank.deliver_single_report(sign(good) + b"\x00", value=FEE)
-    assert bank.latest(ETH, CHANNEL) == (0, 0)
-    assert bank.latest(BTC, CHANNEL) == (0, 0)
+    assert bank.latest(ETH, CHANNEL) == (0, 0, 0)
+    assert bank.latest(BTC, CHANNEL) == (0, 0, 0)
 
 
 def test_unverified_updates_store_nothing(bank):
@@ -183,12 +217,12 @@ def test_unverified_updates_store_nothing(bank):
     ):
         with boa.reverts(reason):
             bank.deliver_single_report(data, value=value)
-    assert bank.latest(BTC, CHANNEL) == (0, 0)
+    assert bank.latest(BTC, CHANNEL) == (0, 0, 0)
     assert boa.env.get_balance(bank.verifier()) == 0
     # A verifier that names no signer is refused too.
     signerless = boa.loads(
         f"@external\n@view\ndef verification_fee() -> uint256:\n    return {FEE}\n"
-        "@external\n@payable\ndef verifyUpdate(u: Bytes[301]) -> (Bytes[301], address):\n"
+        "@external\n@payable\ndef verifyUpdate(u: Bytes[373]) -> (Bytes[373], address):\n"
         "    return slice(u, 71, len(u) - 71), empty(address)"
     )
     bank.set_verifier(signerless.address)
@@ -218,9 +252,9 @@ def test_a_batch_delivers_its_updates_in_order(bank):
         (BTC, 1, 90_000 * WAD),
         (BTC, CHANNEL, 71_000 * WAD),
     ]
-    assert bank.latest(BTC, CHANNEL) == (71_000 * WAD, t)
-    assert bank.latest(BTC, 1) == (90_000 * WAD, t - 2_000_000)
-    assert bank.latest(ETH, CHANNEL) == (3_000 * WAD, t)
+    assert bank.latest(BTC, CHANNEL) == (71_000 * WAD, t, 71_000 * WAD)
+    assert bank.latest(BTC, 1) == (90_000 * WAD, t - 2_000_000, 90_000 * WAD)
+    assert bank.latest(ETH, CHANNEL) == (3_000 * WAD, t, 3_000 * WAD)
     # Every update is verified and paid for, skipped or not; the bank keeps nothing.
     assert boa.env.get_balance(bank.verifier()) == 5 * FEE
     assert boa.env.get_balance(bank.address) == 0
@@ -228,7 +262,7 @@ def test_a_batch_delivers_its_updates_in_order(bank):
     batch = [update([feed(1_000 + k, (k + 1) * WAD, t - k)], message_us=t) for k in range(8)]
     bank.deliver_batch(batch, value=8 * FEE)
     for k in range(8):
-        assert bank.latest(1_000 + k, CHANNEL) == ((k + 1) * WAD, t - k)
+        assert bank.latest(1_000 + k, CHANNEL) == ((k + 1) * WAD, t - k, (k + 1) * WAD)
     # An empty batch reverts, whatever its value.
     for value in (0, FEE):
         with boa.reverts("empty batch"):
@@ -242,18 +276,18 @@ def test_a_free_verifier_takes_no_value():
     with boa.reverts("fee"):
         bank.deliver_single_report(single, value=1)
     bank.deliver_single_report(single, value=0)
-    assert bank.latest(103, CHANNEL) == (WAD, t)
+    assert bank.latest(103, CHANNEL) == (WAD, t, WAD)
     batch = [update([feed(BTC, WAD, t)]), update([feed(ETH, WAD, t)])]
     with boa.reverts("fee"):
         bank.deliver_batch(batch, value=1)
     bank.deliver_batch(batch, value=0)
-    assert bank.latest(ETH, CHANNEL) == (WAD, t)
+    assert bank.latest(ETH, CHANNEL) == (WAD, t, WAD)
 
 
 def test_a_batch_is_all_or_nothing(bank):
     t = now_us()
-    deliver(bank, feed(BTC, 60_000 * WAD, t - 1))
-    good = update([feed(BTC, 70_000 * WAD, t)])
+    deliver(bank, feed(BTC, 60_000 * WAD, t - 1, ema_price=59_000 * WAD))
+    good = update([feed(BTC, 70_000 * WAD, t, ema_price=69_000 * WAD)])
     for batch, value, reason in (
         ([good, good], 2 * FEE - 1, "fee"),
         ([good, good], 2 * FEE + 1, "fee"),
@@ -269,9 +303,9 @@ def test_a_batch_is_all_or_nothing(bank):
     with boa.reverts():  # more than eight updates do not decode
         bank.deliver_batch([good] * 9, value=9 * FEE)
     # Nothing stored, nothing paid: the earlier report and the one fee for it stay.
-    assert bank.latest(BTC, CHANNEL) == (60_000 * WAD, t - 1)
+    assert bank.latest(BTC, CHANNEL) == (60_000 * WAD, t - 1, 59_000 * WAD)
     assert boa.env.get_balance(bank.verifier()) == FEE
-    assert bank.latest(ETH, CHANNEL) == (0, 0)
+    assert bank.latest(ETH, CHANNEL) == (0, 0, 0)
 
 
 # --------------------------------- Decoding ----------------------------------
@@ -281,12 +315,12 @@ def test_decode_reads_one_feed_without_verifying(bank):
     t = now_us()
     data = update([feed(BTC, 70_000 * WAD, t), feed(ETH, 3_000 * WAD, t - 1), (103, 0, -8, t)])
     unsigned = data[:4] + bytes(65) + data[69:]
-    assert bank.decode(unsigned, ETH, CHANNEL) == (3_000 * WAD, t - 1)
-    assert bank.decode(data, BTC, CHANNEL) == (70_000 * WAD, t)
-    assert bank.decode(data, 103, CHANNEL) == (0, t)  # unsupported price: 0
+    assert bank.decode(unsigned, ETH, CHANNEL) == (3_000 * WAD, t - 1, 3_000 * WAD)
+    assert bank.decode(data, BTC, CHANNEL) == (70_000 * WAD, t, 70_000 * WAD)
+    assert bank.decode(data, 103, CHANNEL) == (0, t, 0)  # unsupported price: 0
     # Old reports decode too: nothing is admitted.
     old = update([feed(BTC, WAD, t - 3_600_000_000)])
-    assert bank.decode(old, BTC, CHANNEL) == (WAD, t - 3_600_000_000)
+    assert bank.decode(old, BTC, CHANNEL) == (WAD, t - 3_600_000_000, WAD)
     for args, reason in (
         ((data, 397, CHANNEL), "feed"),
         ((data, BTC, 1), "channel"),
@@ -301,7 +335,7 @@ def test_decode_reads_one_feed_without_verifying(bank):
     ):
         with boa.reverts(reason):
             bank.decode(*args)
-    assert bank.latest(BTC, CHANNEL) == (0, 0)
+    assert bank.latest(BTC, CHANNEL) == (0, 0, 0)
 
 
 # -------------------------------- Governance ---------------------------------
@@ -323,7 +357,7 @@ def test_owner_sets_the_verifier(bank):
     assert bank.get_logs()[-1].verifier == other.address
     assert (bank.verifier(), bank.verification_fee()) == (other.address, 2)
     # Stored prices stay; deliveries now need the new verifier's signer and fee.
-    assert bank.latest(BTC, CHANNEL) == (70_000 * WAD, t)
+    assert bank.latest(BTC, CHANNEL) == (70_000 * WAD, t, 70_000 * WAD)
     boa.env.time_travel(seconds=1)
     with boa.reverts("invalid signer"):
         deliver(bank, feed(BTC, 71_000 * WAD), value=2)
@@ -350,7 +384,7 @@ def test_the_fee_is_read_live_from_the_verifier(bank):
     with boa.reverts("fee"):
         deliver(bank, feed(ETH, WAD, t), value=3)
     deliver(bank, feed(ETH, WAD, t), value=0)
-    assert bank.latest(ETH, CHANNEL) == (WAD, t)
+    assert bank.latest(ETH, CHANNEL) == (WAD, t, WAD)
 
 
 def test_constructor_checks_the_verifier():

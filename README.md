@@ -1,15 +1,17 @@
 # report-bank
 
 `PythReportBank` stores the newest verified [Pyth Lazer](https://docs.pyth.network/price-feeds/pro)
-price of every stream. A stream is one feed on one channel. Anyone can deliver a signed update, and
+price and EMA price of every stream. A stream is one feed on one channel. Anyone can deliver a signed update, and
 any number of contracts can read the stored prices.
 
 ```
-latest[feed_id][channel] = Report(price, observation_us)
+latest[feed_id][channel] = Report(price, observation_us, ema_price)
 ```
 
-The price has 18 decimals (1e18 = $1). The observation time is Pyth's, in microseconds. The two
-fields have a storage slot each: unpacked storage costs more gas but is simpler to read.
+Both prices have 18 decimals (1e18 = $1); the EMA price is Pyth's own moving average and shares the
+price's exponent. The observation time is Pyth's, in microseconds. Each field has its own storage
+slot: unpacked storage costs more gas but is simpler to read. The EMA price comes last, so a reader
+that decodes only `(price, observation_us)` still works.
 
 ## Contract
 
@@ -17,8 +19,8 @@ fields have a storage slot each: unpacked storage costs more gas but is simpler 
 |---|---|
 | `deliver_single_report(update)` | Takes a signed update of 1 to 8 feeds on one channel, with exactly `verification_fee()` as the value. Pyth's verifier checks the signature. Each feed is stored if it is newer than its stream. |
 | `deliver_batch(updates)` | Takes up to 8 signed updates, for example on several channels or signed separately, with exactly `verification_fee()` per update as the value. It handles them in order, as that many single deliveries, and a malformed or unverified update reverts the whole batch. An empty batch reverts. |
-| `latest(feed_id, channel)` | The public mapping itself: `(price, observation_us)` of the stream's newest report, or `(0, 0)` before the first one. |
-| `decode(update, feed_id, channel)` | Converts one feed of an update, for quotes. **Not protected:** it checks the structure as delivery does but not the signature, so anyone can pass any price. Never use its result to authorize anything; `latest` holds verified prices. |
+| `latest(feed_id, channel)` | The public mapping itself: `(price, observation_us, ema_price)` of the stream's newest report, or `(0, 0, 0)` before the first one. |
+| `decode(update, feed_id, channel)` | Converts one feed of an update to `(price, observation_us, ema_price)`, for quotes. **Not protected:** it checks the structure as delivery does but not the signature, so anyone can pass any price. Never use its result to authorize anything; `latest` holds verified prices. |
 | `verification_fee()` | The verifier's fee, in wei. |
 | `set_verifier(verifier)` | Replaces the verifier. Owner only. The stored prices are kept. |
 
@@ -26,12 +28,14 @@ Delivery rules:
 
 - **Reverts:** a malformed update reverts as a whole. That covers bad magic, a feed count outside
   1 to 8, a wrong length (including bytes after the payload, which Pyth's verifier would ignore),
-  a duplicate feed, properties other than price, exponent and feed update time in that order, a
+  a duplicate feed, properties other than price, exponent, EMA price and feed update time in that
+  order (Pyth writes them in the order requested, so `pyth.py` asks in this order), a
   message time more than 6 s ahead of the block, and an observation time later than its message
   time. Every feed is checked, including those that will be skipped.
 - **Skips:** a feed is skipped, not stored, when its observation is not newer than the stream's, or
-  it has a price the bank does not store (a mantissa of 0 or less, or an exponent outside
-  [-18, 0]). Its other feeds are still stored.
+  its price or EMA price is one the bank does not store (a mantissa of 0 or less, or an exponent
+  outside [-18, 0]). Its stream keeps its whole previous report, and the update's other feeds are
+  still stored.
 - **Channels:** channels never share storage. Reports on one channel cannot displace another
   channel's.
 - **Freshness:** the bank sets no maximum age. An old observation is stored when it is newer than
@@ -40,8 +44,9 @@ Delivery rules:
 - **Fees:** the value must be exactly `verification_fee()` per update, or the call reverts. The bank
   cannot take a refund, so an overpayment would otherwise stay with Pyth's verifier.
 
-This is twocrypto-ng's `contracts/main/PythReportBank.vy` without its moving averages. Its reader
-interface, `latest` and `decode`, is unchanged, so `YBOraclizedPolicy` reads it as before.
+This is twocrypto-ng's `contracts/main/PythReportBank.vy` without its own moving averages; it stores
+Pyth's EMA price instead. The `latest` and `decode` selectors and their first two returned fields are
+unchanged, so `YBOraclizedPolicy` reads it as before.
 
 ## Feeds
 

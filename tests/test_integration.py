@@ -15,11 +15,13 @@ SECP256K1_ORDER = 0xFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFEBAAEDCE6AF48A03BBFD25E8CD036
 
 
 def reports(response):
-    """{feed id: (price in 1e18, observation us)} from Pyth's own parse."""
+    """{feed id: (price, observation us, EMA price)}, prices in 1e18, from Pyth's own
+    parse."""
     return {
         entry["priceFeedId"]: (
             int(entry["price"]) * 10 ** (18 + entry["exponent"]),
             entry["feedUpdateTimestamp"],
+            int(entry["emaPrice"]) * 10 ** (18 + entry["exponent"]),
         )
         for entry in response["parsed"]["priceFeeds"]
     }
@@ -71,7 +73,7 @@ def test_recorded_update_is_refused_when_not_authentic(bank):
         with boa.reverts("invalid signer"):
             BANK.deploy(verifier.address).deliver_single_report(data, value=FEE)
     for feed_id in pyth.FEEDS.values():
-        assert bank.latest(feed_id, CHANNEL) == (0, 0)
+        assert bank.latest(feed_id, CHANNEL) == (0, 0, 0)
 
 
 def test_recorded_update_is_stored_late_but_not_early(bank):

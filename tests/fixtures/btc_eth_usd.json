@@ -1,23 +1,25 @@
 {
   "parsed": {
-    "timestampUs": "1794348561000000",
+    "timestampUs": "1794507571000000",
     "priceFeeds": [
       {
         "priceFeedId": 1,
-        "price": "7385842700888",
+        "price": "7187294868556",
         "exponent": -8,
-        "feedUpdateTimestamp": 1794348561000000
+        "emaPrice": "7177650510000",
+        "feedUpdateTimestamp": 1794507571000000
       },
       {
         "priceFeedId": 2,
-        "price": "205717841552",
+        "price": "201754113477",
         "exponent": -8,
-        "feedUpdateTimestamp": 1794348561000000
+        "emaPrice": "201072519100",
+        "feedUpdateTimestamp": 1794507571000000
       }
     ]
   },
   "evm": {
     "encoding": "hex",
-    "data": "2a22999a960277502dd63229b12e7296bd0e353a02928ae3cac8c2644fe97c3cfb4087a900184df9f57a8cdd2053867d917baf6cb15d0fd3b22315043a8c40d3a3d6d2be00004493c7d37500065ff35494e6400402000000010300000006b7a687d25804fff80c0100065ff35494e6400000000203000000002fe5bd269004fff80c0100065ff35494e640"
+    "data": "2a22999a6c199f5c6a8308a99eaab8c7ff71e8d4a7e652d3ab600083236511172eaa50e42206beb58a693e134a96d102a9246ca9f82526dd9a65e1b3370c0feca9150eff00005693c7d375000660185a50f2c00402000000010400000006896c28544c04fff80a000006872d4f18b00c01000660185a50f2c00000000204000000002ef97b75c504fff80a0000002ed0db27bc0c01000660185a50f2c0"
   }
 }

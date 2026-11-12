@@ -34,8 +34,9 @@ def fetch(feed_ids=None, channel=CHANNEL) -> dict:
         raise RuntimeError("Set PYTH_API_KEY in the environment or .env")
     body = {
         "priceFeedIds": list(FEEDS.values() if feed_ids is None else feed_ids),
-        # Exactly the properties the bank decodes, in this order.
-        "properties": ["price", "exponent", "feedUpdateTimestamp"],
+        # Exactly the properties the bank decodes, in this order: Pyth writes
+        # them in the order requested.
+        "properties": ["price", "exponent", "emaPrice", "feedUpdateTimestamp"],
         "formats": ["evm"],
         "channel": CHANNELS[channel],
         "jsonBinaryEncoding": "hex",
