@@ -189,8 +189,10 @@ def verification_fee() -> uint256:
 @external
 def decode(_update: Bytes[MAX_UPDATE_BYTES], _feed_id: uint32, _channel: uint8) -> (uint256, uint256):
     """
-    @notice One feed of a signed update, for quotes. The signature is not
-            verified, and nothing is admitted or stored.
+    @notice One feed of an update, converted for quotes. NOT PROTECTED: the
+            signature is not checked, so anyone can pass any price here. Never
+            use the result to authorize a state change; use latest() for that.
+            Nothing is admitted or stored.
     @dev Reverts where delivery would on structure, and unless the update is on
          `_channel` and carries `_feed_id`. The price is 0 where delivery would
          skip it as unsupported.

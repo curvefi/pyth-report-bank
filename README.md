@@ -18,7 +18,7 @@ fields have a storage slot each: unpacked storage costs more gas but is simpler 
 | `deliver_single_report(update)` | Takes a signed update of 1 to 8 feeds on one channel, with exactly `verification_fee()` as the value. Pyth's verifier checks the signature. Each feed is stored if it is newer than its stream. |
 | `deliver_batch(updates)` | Takes up to 8 signed updates, for example on several channels or signed separately, with exactly `verification_fee()` per update as the value. It handles them in order, as that many single deliveries, and a malformed or unverified update reverts the whole batch. An empty batch reverts. |
 | `latest(feed_id, channel)` | The public mapping itself: `(price, observation_us)` of the stream's newest report, or `(0, 0)` before the first one. |
-| `decode(update, feed_id, channel)` | Reads one feed from an update without verifying the signature or storing anything. It checks the same structure as delivery. This is for quotes. |
+| `decode(update, feed_id, channel)` | Converts one feed of an update, for quotes. **Not protected:** it checks the structure as delivery does but not the signature, so anyone can pass any price. Never use its result to authorize anything; `latest` holds verified prices. |
 | `verification_fee()` | The verifier's fee, in wei. |
 | `set_verifier(verifier)` | Replaces the verifier. Owner only. The stored prices are kept. |
 
