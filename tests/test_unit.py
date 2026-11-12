@@ -1,5 +1,6 @@
-"""PythReportBank on updates built and signed in the test: delivery, admission,
-streams, scaling, malformed input, decoding and governance."""
+"""PythReportBank on updates built and signed in the test: delivery, the
+future-message check, streams, scaling, malformed input, batches, fees, decoding
+and governance."""
 
 import boa
 from conftest import (
@@ -91,9 +92,12 @@ def test_each_feed_is_stored_or_skipped_on_its_own(bank):
             assert bank.latest(skipped, CHANNEL) == (0, 0)
         # A delivery with nothing new succeeds and stores nothing.
         assert deliver(bank, feed(ETH, 3_200 * WAD, t)) == []
-    # Eight feeds fit one update; nine do not decode.
-    deliver(bank, *[feed(1_000 + k, (k + 1) * WAD, t) for k in range(8)])
-    assert bank.latest(1_007, CHANNEL) == (8 * WAD, t)
+    # Eight feeds fit one update, and each lands in its own stream; nine do not decode.
+    eight = update([feed(1_000 + k, (k + 1) * WAD, t - k) for k in range(8)], message_us=t)
+    bank.deliver_single_report(eight, value=FEE)
+    for k in range(8):
+        assert bank.latest(1_000 + k, CHANNEL) == ((k + 1) * WAD, t - k)
+        assert bank.decode(eight, 1_000 + k, CHANNEL) == ((k + 1) * WAD, t - k)
     with boa.reverts():
         deliver(bank, *[feed(2_000 + k, WAD, t) for k in range(9)])
 
@@ -220,19 +224,25 @@ def test_a_batch_delivers_its_updates_in_order(bank):
     # Every update is verified and paid for, skipped or not; the bank keeps nothing.
     assert boa.env.get_balance(bank.verifier()) == 5 * FEE
     assert boa.env.get_balance(bank.address) == 0
-    # Eight updates fit one batch.
-    bank.deliver_batch([update([feed(1_000 + k, WAD, t)]) for k in range(8)], value=8 * FEE)
-    assert bank.latest(1_007, CHANNEL) == (WAD, t)
-    # An empty batch does nothing, and takes no value.
-    bank.deliver_batch([], value=0)
-    assert bank.get_logs() == []
-    with boa.reverts("fee"):
-        bank.deliver_batch([], value=FEE)
+    # Eight updates fit one batch, each stored in its own stream.
+    batch = [update([feed(1_000 + k, (k + 1) * WAD, t - k)], message_us=t) for k in range(8)]
+    bank.deliver_batch(batch, value=8 * FEE)
+    for k in range(8):
+        assert bank.latest(1_000 + k, CHANNEL) == ((k + 1) * WAD, t - k)
+    # An empty batch reverts, whatever its value.
+    for value in (0, FEE):
+        with boa.reverts("empty batch"):
+            bank.deliver_batch([], value=value)
 
 
-def test_a_batch_through_a_free_verifier_takes_no_value():
+def test_a_free_verifier_takes_no_value():
     bank = deploy(TEST_KEY.public_key.to_checksum_address(), fee=0)
     t = now_us()
+    single = update([feed(103, WAD, t)])
+    with boa.reverts("fee"):
+        bank.deliver_single_report(single, value=1)
+    bank.deliver_single_report(single, value=0)
+    assert bank.latest(103, CHANNEL) == (WAD, t)
     batch = [update([feed(BTC, WAD, t)]), update([feed(ETH, WAD, t)])]
     with boa.reverts("fee"):
         bank.deliver_batch(batch, value=1)
@@ -242,6 +252,7 @@ def test_a_batch_through_a_free_verifier_takes_no_value():
 
 def test_a_batch_is_all_or_nothing(bank):
     t = now_us()
+    deliver(bank, feed(BTC, 60_000 * WAD, t - 1))
     good = update([feed(BTC, 70_000 * WAD, t)])
     for batch, value, reason in (
         ([good, good], 2 * FEE - 1, "fee"),
@@ -257,9 +268,10 @@ def test_a_batch_is_all_or_nothing(bank):
             bank.deliver_batch(batch, value=value)
     with boa.reverts():  # more than eight updates do not decode
         bank.deliver_batch([good] * 9, value=9 * FEE)
-    # Nothing stored, nothing paid.
-    assert bank.latest(BTC, CHANNEL) == (0, 0)
-    assert boa.env.get_balance(bank.verifier()) == 0
+    # Nothing stored, nothing paid: the earlier report and the one fee for it stay.
+    assert bank.latest(BTC, CHANNEL) == (60_000 * WAD, t - 1)
+    assert boa.env.get_balance(bank.verifier()) == FEE
+    assert bank.latest(ETH, CHANNEL) == (0, 0)
 
 
 # --------------------------------- Decoding ----------------------------------
@@ -322,6 +334,23 @@ def test_owner_sets_the_verifier(bank):
     with boa.reverts("ownable: caller is not the owner"):
         bank.set_verifier(other.address)
     bank.set_verifier(other.address, sender=dao)
+
+
+def test_the_fee_is_read_live_from_the_verifier(bank):
+    t = now_us()
+    verifier = PYTH.at(bank.verifier())
+    # Pyth raises its fee: the old one is refused, the new one accepted at once.
+    verifier.eval("self.verification_fee = 3")
+    assert bank.verification_fee() == 3
+    with boa.reverts("fee"):
+        deliver(bank, feed(BTC, WAD, t), value=FEE)
+    deliver(bank, feed(BTC, WAD, t), value=3)
+    # Pyth drops it to zero: any value is refused.
+    verifier.eval("self.verification_fee = 0")
+    with boa.reverts("fee"):
+        deliver(bank, feed(ETH, WAD, t), value=3)
+    deliver(bank, feed(ETH, WAD, t), value=0)
+    assert bank.latest(ETH, CHANNEL) == (WAD, t)
 
 
 def test_constructor_checks_the_verifier():

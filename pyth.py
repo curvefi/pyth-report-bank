@@ -33,7 +33,7 @@ def fetch(feed_ids=None, channel=CHANNEL) -> dict:
     if not key:
         raise RuntimeError("Set PYTH_API_KEY in the environment or .env")
     body = {
-        "priceFeedIds": list(feed_ids or FEEDS.values()),
+        "priceFeedIds": list(FEEDS.values() if feed_ids is None else feed_ids),
         # Exactly the properties the bank decodes, in this order.
         "properties": ["price", "exponent", "feedUpdateTimestamp"],
         "formats": ["evm"],
@@ -61,4 +61,4 @@ def update_bytes(response: dict) -> bytes:
 if __name__ == "__main__":
     FIXTURE.parent.mkdir(parents=True, exist_ok=True)
     FIXTURE.write_text(json.dumps(fetch(), indent=2) + "\n")
-    print(f"saved {FIXTURE.relative_to(Path.cwd())}")
+    print(f"saved {FIXTURE}")

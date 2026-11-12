@@ -16,7 +16,7 @@ fields have a storage slot each: unpacked storage costs more gas but is simpler 
 | Call | What it does |
 |---|---|
 | `deliver_single_report(update)` | Takes a signed update of 1 to 8 feeds on one channel, with exactly `verification_fee()` as the value. Pyth's verifier checks the signature. Each feed is stored if it is newer than its stream. |
-| `deliver_batch(updates)` | Takes up to 8 signed updates, for example on several channels or signed separately, with exactly `verification_fee()` per update as the value. It handles them in order, as that many single deliveries, and a malformed or unverified update reverts the whole batch. An empty batch does nothing. |
+| `deliver_batch(updates)` | Takes up to 8 signed updates, for example on several channels or signed separately, with exactly `verification_fee()` per update as the value. It handles them in order, as that many single deliveries, and a malformed or unverified update reverts the whole batch. An empty batch reverts. |
 | `latest(feed_id, channel)` | The public mapping itself: `(price, observation_us)` of the stream's newest report, or `(0, 0)` before the first one. |
 | `decode(update, feed_id, channel)` | Reads one feed from an update without verifying the signature or storing anything. It checks the same structure as delivery. This is for quotes. |
 | `verification_fee()` | The verifier's fee, in wei. |
@@ -35,13 +35,13 @@ Delivery rules:
 - **Channels:** channels never share storage. Reports on one channel cannot displace another
   channel's.
 - **Freshness:** the bank sets no maximum age. An old observation is stored when it is newer than
-  its stream's, so a late keeper transaction still lands. `latest()` returns the newest report
-  however old it is, so each reader checks the age it accepts.
+  its stream's, so a late keeper transaction still lands. `latest(feed_id, channel)` returns the
+  newest report however old it is, so each reader checks the age it accepts.
 - **Fees:** the value must be exactly `verification_fee()` per update, or the call reverts. The bank
   cannot take a refund, so an overpayment would otherwise stay with Pyth's verifier.
 
-This is twocrypto-ng's `contracts/main/PythReportBank.vy` without its moving averages. The rest of its interface is unchanged, including `latest` and `decode`, which
-`YBOraclizedPolicy` calls.
+This is twocrypto-ng's `contracts/main/PythReportBank.vy` without its moving averages. Its reader
+interface, `latest` and `decode`, is unchanged, so `YBOraclizedPolicy` reads it as before.
 
 ## Feeds
 

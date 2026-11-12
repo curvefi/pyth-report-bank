@@ -107,7 +107,7 @@ event ReportStored:
 
 
 event SetVerifier:
-    verifier: address
+    verifier: indexed(address)
 
 
 ################################################################
@@ -162,9 +162,10 @@ def deliver_batch(_updates: DynArray[Bytes[MAX_UPDATE_BYTES], MAX_BATCH]):
     """
     @notice deliver_single_report() for each update, in order and all or nothing
     @dev Send exactly verification_fee() per update as value. An empty batch
-         does nothing and takes no value.
+         reverts, so a keeper's mistake shows in simulation.
     @param _updates Signed updates, for instance one per channel
     """
+    assert len(_updates) > 0, "empty batch"
     fee: uint256 = staticcall PythLazer(self.verifier).verification_fee()
     assert msg.value == fee * len(_updates), "fee"
     for i: uint256 in range(len(_updates), bound=MAX_BATCH):
@@ -193,7 +194,8 @@ def decode(_update: Bytes[MAX_UPDATE_BYTES], _feed_id: uint32, _channel: uint8) 
     @dev Reverts where delivery would on structure, and unless the update is on
          `_channel` and carries `_feed_id`. The price is 0 where delivery would
          skip it as unsupported.
-         Envelope, byte ranges [start:end) from the start of the update:
+         Envelope, from the start of the update; ranges are Python slices, so
+         [0:4] is bytes 0 to 3:
              [0:4]      EVM magic          EVM_MAGIC
              [4:36]     signature r        bytes32
              [36:68]    signature s        bytes32
@@ -291,8 +293,8 @@ def _deliver(_update: Bytes[MAX_UPDATE_BYTES], _fee: uint256):
 def _parse_payload(_payload: Bytes[MAX_PAYLOAD_BYTES]) -> (uint256, uint8, DynArray[Feed, MAX_FEEDS]):
     """
     @notice Decode a payload and check all of it: the header and every feed
-    @dev Byte ranges [start:end). Numbers are big-endian, signed ones in two's
-         complement.
+    @dev Byte ranges are Python slices, so [0:4] is bytes 0 to 3. Numbers are
+         big-endian, signed ones in two's complement.
          Header, from the start of the payload:
              [0:4]      payload magic      PAYLOAD_MAGIC
              [4:12]     message time       uint64, us
