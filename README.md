@@ -4,6 +4,10 @@
 price and EMA price of every stream. A stream is one feed on one channel. Anyone can deliver a signed update, and
 any number of contracts can read the stored prices.
 
+Deployed on Ethereum at
+[`0xa7E5337FfC8a2D08175ff3a5C99D6B043a944355`](https://etherscan.io/address/0xa7E5337FfC8a2D08175ff3a5C99D6B043a944355#code),
+owned by the YieldBasis DAO.
+
 ```
 latest[feed_id][channel] = Report(price, observation_us, ema_price)
 ```
@@ -54,8 +58,11 @@ unchanged, so `YBOraclizedPolicy` reads it as before.
 |---|---|
 | BTC/USD | 1 |
 | ETH/USD | 2 |
+| WBTC/USD | 103 |
+| CBBTC/USD | 397 |
+| TBTC/USD | 588 |
 
-Both use channel 4 (`fixed_rate@1000ms`). Our API key is refused anything faster.
+All use channel 4 (`fixed_rate@1000ms`). Our API key is refused anything faster.
 
 ## Setup
 
@@ -93,3 +100,31 @@ To record a fresh fixture:
 ```sh
 uv run python pyth.py
 ```
+
+## Deploy
+
+```sh
+uv run python scripts/deploy.py        # dry run on a fork of ETH_RPC_URL
+uv run python scripts/deploy.py real   # real deployment
+```
+
+Both deploy the bank with Pyth's verifier `0xACeA761c27A909d4D3895128EBe6370FDE2dF481` and read back
+its code and verifier. The dry run then delivers a live BTC/USD + ETH/USD update through that
+verifier and checks the stored prices against Pyth's own parse, so it also tests the deployed
+verifier. The real run signs as the deployer `0xb101b2b0aa02b7167D238B98dc1B0b0404a760E8`, whose key
+opens only with a YubiKey touch and then the keystore password (`scripts/yubi_deployers.py`, a
+verbatim copy from the yubi-deployers project; it needs `age` and `age-plugin-yubikey`). It moves
+ownership to the YieldBasis DAO `0x42F2A41A0D0e65A440813190880c8a65124895Fa` (`CONFIG.owner`), and
+verifies the source on Etherscan when `ETHERSCAN_API_KEY` is set.
+
+## Submit
+
+```sh
+uv run python scripts/submit.py        # dry run on a fork of ETH_RPC_URL
+uv run python scripts/submit.py real   # real transaction
+```
+
+Fetches one signed update of BTC, WBTC, tBTC, cbBTC and ETH in USD and delivers it to the deployed
+bank, signed by the plain key in `WEB3_TESTNET_PK` (delivery needs no privileges). Nothing is sent
+when no feed is newer than the bank's report, and every stored report is checked against Pyth's
+parse. A first delivery of all five costs about 400,000 gas.

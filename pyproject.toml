@@ -20,4 +20,5 @@ testpaths = ["tests"]
 
 [tool.ruff]
 line-length = 100
-extend-exclude = [".aichord"]
+# scripts/yubi_deployers.py is a verbatim copy from the yubi-deployers project.
+extend-exclude = [".aichord", "scripts/yubi_deployers.py"]

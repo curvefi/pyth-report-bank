@@ -9,7 +9,7 @@ from eth_utils import keccak
 
 WAD = 10**18
 BTC, ETH, CHANNEL = 1, 2, 4  # feed ids; channel 4 is fixed_rate@1000ms
-FEE = 1  # wei: Pyth's mainnet verification fee
+FEE = 1  # wei; nonzero so the fee checks run (Pyth's mainnet fee was 0 on 2026-11-12)
 FOREVER = 2**64  # signer expiry, unix seconds
 PAYLOAD_MAGIC = 0x93C7D375
 EVM_MAGIC = bytes.fromhex("2a22999a")

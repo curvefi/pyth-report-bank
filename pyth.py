@@ -59,6 +59,23 @@ def update_bytes(response: dict) -> bytes:
     return bytes.fromhex(response["evm"]["data"])
 
 
+def reports(response: dict) -> dict:
+    """{feed id: (price, observation us, EMA price)}, prices in 1e18, from Pyth's own
+    parse, as the bank decodes them: both prices are 0, and the bank skips the feed,
+    unless both mantissas are positive and the exponent is in [-18, 0]. Pyth's parse
+    leaves out a price it does not have."""
+    parsed = {}
+    for entry in response["parsed"]["priceFeeds"]:
+        price = int(entry.get("price", 0))
+        ema = int(entry.get("emaPrice", 0))
+        exponent = entry["exponent"]
+        if price <= 0 or ema <= 0 or not -18 <= exponent <= 0:
+            price = ema = exponent = 0
+        scale = 10 ** (18 + exponent)
+        parsed[entry["priceFeedId"]] = (price * scale, entry["feedUpdateTimestamp"], ema * scale)
+    return parsed
+
+
 if __name__ == "__main__":
     FIXTURE.parent.mkdir(parents=True, exist_ok=True)
     FIXTURE.write_text(json.dumps(fetch(), indent=2) + "\n")

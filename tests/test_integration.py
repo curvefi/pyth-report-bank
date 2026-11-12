@@ -9,22 +9,10 @@ import pytest
 from conftest import BANK, CHANNEL, FEE, PYTH, deploy
 
 import pyth
+from pyth import reports
 
 RECORDED = json.loads(pyth.FIXTURE.read_text())
 SECP256K1_ORDER = 0xFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFEBAAEDCE6AF48A03BBFD25E8CD0364141
-
-
-def reports(response):
-    """{feed id: (price, observation us, EMA price)}, prices in 1e18, from Pyth's own
-    parse."""
-    return {
-        entry["priceFeedId"]: (
-            int(entry["price"]) * 10 ** (18 + entry["exponent"]),
-            entry["feedUpdateTimestamp"],
-            int(entry["emaPrice"]) * 10 ** (18 + entry["exponent"]),
-        )
-        for entry in response["parsed"]["priceFeeds"]
-    }
 
 
 def set_clock(response):
