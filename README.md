@@ -5,9 +5,8 @@ price of every stream. A stream is one feed on one channel. Anyone can deliver a
 any number of contracts can read the stored prices.
 
 Deployed on Ethereum at
-[`0x76216954BE01eECdC0D7b00cd8bb72C2e28F0da7`](https://etherscan.io/address/0x76216954BE01eECdC0D7b00cd8bb72C2e28F0da7#code)
-(2026-11-13), owned by the YieldBasis DAO. That deployment predates the 60-second age limit below,
-which takes effect with the next deployment.
+[`0x8a0f866de34631311b7745C5f4eec7Bf1F6849dB`](https://etherscan.io/address/0x8a0f866de34631311b7745C5f4eec7Bf1F6849dB#code)
+(2026-11-13), owned by the YieldBasis DAO.
 
 ```
 latest[feed_id][channel] = Report(price, observation_us)
