@@ -6,7 +6,8 @@ any number of contracts can read the stored prices.
 
 Deployed on Ethereum at
 [`0x76216954BE01eECdC0D7b00cd8bb72C2e28F0da7`](https://etherscan.io/address/0x76216954BE01eECdC0D7b00cd8bb72C2e28F0da7#code)
-(2026-11-13), owned by the YieldBasis DAO.
+(2026-11-13), owned by the YieldBasis DAO. That deployment predates the 60-second age limit below,
+which takes effect with the next deployment.
 
 ```
 latest[feed_id][channel] = Report(price, observation_us)
@@ -19,7 +20,7 @@ fields have a storage slot each: unpacked storage costs more gas but is simpler 
 
 | Call | What it does |
 |---|---|
-| `deliver_report(update)` | Takes a signed update of 1 to 8 feeds on one channel, with exactly `verification_fee()` as the value. Pyth's verifier checks the signature. Each feed is stored if it is newer than its stream. Updates on several channels take a call each. |
+| `deliver_report(update)` | Takes a signed update of 1 to 8 feeds on one channel, with exactly `verification_fee()` as the value. Pyth's verifier checks the signature. Its message and every feed must be from 60 s before to 6 s after the block. Each feed is stored if it is newer than its stream. Updates on several channels take a call each. |
 | `latest(feed_id, channel)` | The public mapping itself: `(price, observation_us)` of the stream's newest report, or `(0, 0)` before the first one. |
 | `decode(update, feed_id, channel)` | Converts one feed of an update to `(price, observation_us)`, for quotes. **Not protected:** it checks the structure as delivery does but not the signature, so anyone can pass any price. Never use its result to authorize anything; `latest` holds verified prices. |
 | `verification_fee()` | The verifier's fee, in wei. |
@@ -30,17 +31,19 @@ Delivery rules:
 - **Reverts:** a malformed update reverts as a whole. That covers bad magic, a feed count outside
   1 to 8, a wrong length (including bytes after the payload, which Pyth's verifier would ignore),
   a duplicate feed, properties other than price, exponent and feed update time in that order
-  (Pyth writes them in the order requested, so `pyth.py` asks in this order), a
-  message time more than 6 s ahead of the block, and an observation time later than its message
-  time. Every feed is checked, including those that will be skipped.
+  (Pyth writes them in the order requested, so `pyth.py` asks in this order), an observation time
+  later than its message time, and a message time or any observation time outside the delivery
+  window (below). Every feed is checked, including those that will be skipped.
 - **Skips:** a feed is skipped, not stored, when its observation is not newer than the stream's, or
   its price is one the bank does not store (a mantissa of 0 or less, or an exponent outside
   [-18, 0]). Its stream keeps its previous report, and the update's other feeds are still stored.
 - **Channels:** channels never share storage. Reports on one channel cannot displace another
   channel's.
-- **Freshness:** the bank sets no maximum age. An old observation is stored when it is newer than
-  its stream's, so a late keeper transaction still lands. `latest(feed_id, channel)` returns the
-  newest report however old it is, so each reader checks the age it accepts.
+- **Delivery window:** the message time and every feed's observation time must be from 60 s
+  before the block to 6 s after it, both inclusive. A keeper transaction mined more than 60 s
+  after the observations reverts. The window binds delivery only: `latest(feed_id, channel)`
+  returns the newest report however old it has grown since, so each reader checks the age it
+  accepts.
 - **Fees:** the value must be exactly `verification_fee()`, or the call reverts. The bank
   cannot take a refund, so an overpayment would otherwise stay with Pyth's verifier.
 
@@ -73,12 +76,12 @@ uv run pytest
 ```
 
 - **`tests/test_unit.py`:** updates built in Python and signed with a test key. Covers delivery,
-  the future-message check, streams, price scaling, malformed input, fees, decoding and governance.
+  the delivery window, streams, price scaling, malformed input, fees, decoding and governance.
 - **`tests/test_integration.py`:** a real signed BTC/USD + ETH/USD update recorded from Pyth
   (`tests/fixtures/btc_eth_usd.json`), replayed with the block clock set to its message time. The
-  stored prices must equal Pyth's own parse. Tampering, a foreign signer, an expired signer and an
-  early delivery are refused; a delivery an hour late is still stored. Whenever `PYTH_API_KEY` is
-  set, a live test also fetches and delivers one update of both feeds.
+  stored prices must equal Pyth's own parse. Tampering, a foreign signer, an expired signer and a
+  delivery more than 6 s early or 60 s late are refused; one exactly 60 s late is stored. Whenever
+  `PYTH_API_KEY` is set, a live test also fetches and delivers one update of both feeds.
 
 Both suites verify signatures with `tests/mocks/PythLazer.vy`. It is a Vyper port of `verifyUpdate`
 from Pyth's [PythLazer.sol](https://github.com/pyth-network/pyth-crosschain/blob/main/lazer/contracts/evm/src/PythLazer.sol)

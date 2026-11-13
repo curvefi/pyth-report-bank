@@ -1,6 +1,5 @@
-"""PythReportBank on updates built and signed in the test: delivery, the
-future-message check, streams, scaling, malformed input, fees, decoding and
-governance."""
+"""PythReportBank on updates built and signed in the test: delivery, the delivery
+window, streams, scaling, malformed input, fees, decoding and governance."""
 
 import struct
 
@@ -85,11 +84,11 @@ def test_each_feed_is_stored_or_skipped_on_its_own(bank):
             (397, -5, -8, t1),  # negative price
             (588, 7, 1, t1),  # exponent above 0
             (631, 7, -19, t1),  # exponent below -18
-            feed(2_000, WAD, t1 - 3_600_000_000),  # an hour old, but new to its stream: stored
+            feed(2_000, WAD, t1 - 60_000_000),  # a minute old, but new to its stream: stored
         )
         assert [log.feed_id for log in logs] == [BTC, 2_000]
         assert bank.latest(BTC, CHANNEL) == (70_000 * WAD, t1)
-        assert bank.latest(2_000, CHANNEL) == (WAD, t1 - 3_600_000_000)
+        assert bank.latest(2_000, CHANNEL) == (WAD, t1 - 60_000_000)
         # Skipped feeds keep their stored reports.
         assert bank.latest(ETH, CHANNEL) == (3_000 * WAD, t)
         assert bank.latest(103, CHANNEL) == (WAD, t - 1_000_000)
@@ -122,24 +121,36 @@ def test_prices_scale_to_18_decimals(bank):
     assert bank.latest(397, CHANNEL) == ((2**63 - 1) * WAD, t)
 
 
-def test_only_messages_from_the_future_are_refused(bank):
+def test_updates_are_delivered_from_60_s_old_to_6_s_ahead(bank):
     t = now_us()
-    # No maximum age: any observation newer than its stream's is stored.
-    deliver(bank, feed(BTC, WAD, t - 86_400_000_000), message_us=t)
-    assert bank.latest(BTC, CHANNEL) == (WAD, t - 86_400_000_000)
-    deliver(bank, feed(BTC, 2 * WAD, t - 12_000_000), message_us=t)
-    assert bank.latest(BTC, CHANNEL) == (2 * WAD, t - 12_000_000)
+    # A feed observed up to 60 s before the block is stored.
+    deliver(bank, feed(BTC, WAD, t - 60_000_000), message_us=t)
+    assert bank.latest(BTC, CHANNEL) == (WAD, t - 60_000_000)
+    # A message more than 60 s old reverts, as its feeds are older still.
+    with boa.reverts("message age"):
+        deliver(bank, feed(ETH, WAD, t - 61_000_000), message_us=t - 60_000_001)
+    # In a fresh message, a feed one microsecond too old reverts the whole update,
+    # beside fresh feeds and even when the bank would skip it as unsupported or
+    # not newer.
+    for stale in (
+        feed(103, WAD, t - 60_000_001),
+        (103, 0, -8, t - 60_000_001),
+        feed(BTC, 2 * WAD, t - 60_000_001),
+    ):
+        with boa.reverts("observation age"):
+            deliver(bank, feed(ETH, WAD, t), stale, message_us=t)
+    assert bank.latest(ETH, CHANNEL) == (0, 0)
     # A message up to 6 s ahead of the block is admitted, its observations too.
     deliver(bank, feed(ETH, WAD, t + 6_000_000))
     assert bank.latest(ETH, CHANNEL) == (WAD, t + 6_000_000)
-    with boa.reverts("message time"):
+    with boa.reverts("message ahead"):
         bank.deliver_report(update([feed(103, WAD, t)], message_us=t + 6_000_001), value=FEE)
     # An observation may equal its message time but not pass it.
     with boa.reverts("observation time"):
         bank.deliver_report(update([feed(103, WAD, t)], message_us=t - 1), value=FEE)
-    # A stored report never expires.
+    # The age limit applies at delivery only: a stored report never expires.
     boa.env.time_travel(seconds=86_400)
-    assert bank.latest(BTC, CHANNEL) == (2 * WAD, t - 12_000_000)
+    assert bank.latest(BTC, CHANNEL) == (WAD, t - 60_000_000)
 
 
 def test_malformed_updates_revert_as_a_whole(bank):
@@ -226,7 +237,7 @@ def test_decode_reads_one_feed_without_verifying(bank):
     assert bank.decode(unsigned, ETH, CHANNEL) == (3_000 * WAD, t - 1)
     assert bank.decode(data, BTC, CHANNEL) == (70_000 * WAD, t)
     assert bank.decode(data, 103, CHANNEL) == (0, t)  # unsupported price: 0
-    # Old reports decode too: nothing is admitted.
+    # Reports too old to deliver decode too: decode checks no time.
     old = update([feed(BTC, WAD, t - 3_600_000_000)])
     assert bank.decode(old, BTC, CHANNEL) == (WAD, t - 3_600_000_000)
     for args, reason in (

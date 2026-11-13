@@ -34,7 +34,7 @@ CONFIG = SimpleNamespace(
     # The YubiKey-held key ~/.config/eth/<deployer>.json.age signs; the dry run deploys from it.
     deployer="0xb101b2b0aa02b7167D238B98dc1B0b0404a760E8",
     owner="0x42F2A41A0D0e65A440813190880c8a65124895Fa",  # YieldBasis DAO; None keeps the deployer.
-    bank="0x76216954BE01eECdC0D7b00cd8bb72C2e28F0da7",  # deployed 2026-11-13; None deploys anew
+    bank=None,  # The deployment to check instead of deploying; None deploys a new bank.
 )
 
 BANK = boa.load_partial(str(ROOT / "contracts" / "PythReportBank.vy"))

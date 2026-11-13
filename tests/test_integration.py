@@ -64,15 +64,19 @@ def test_recorded_update_is_refused_when_not_authentic(bank):
         assert bank.latest(feed_id, CHANNEL) == (0, 0)
 
 
-def test_recorded_update_is_stored_late_but_not_early(bank):
+def test_recorded_update_is_stored_only_within_its_window(bank):
     data = pyth.update_bytes(RECORDED)
-    set_clock(RECORDED)
+    set_clock(RECORDED)  # its feeds were observed at its message time
     # More than 6 s before its message time it is refused.
-    boa.env.time_travel(seconds=-8)
-    with boa.reverts("message time"):
+    boa.env.time_travel(seconds=-7)
+    with boa.reverts("message ahead"):
         bank.deliver_report(data, value=FEE)
-    # An hour late it is still stored: readers bound the age.
-    boa.env.time_travel(seconds=8 + 3_600)
+    # More than 60 s after it, too.
+    boa.env.time_travel(seconds=7 + 61)
+    with boa.reverts("message age"):
+        bank.deliver_report(data, value=FEE)
+    # 60 s after it, it is still stored.
+    boa.env.time_travel(seconds=-1)
     bank.deliver_report(data, value=FEE)
     for feed_id, report in reports(RECORDED).items():
         assert bank.latest(feed_id, CHANNEL) == report

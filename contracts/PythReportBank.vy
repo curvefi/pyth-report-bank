@@ -10,6 +10,9 @@ Notable features are:
     - Anyone delivers signed Pyth Lazer updates, paying Pyth's verification fee
     - One update carries 1 to MAX_FEEDS feeds on one channel; each update is
       its own call
+    - An update's message time and each of its feeds' observation times must
+      be from MAX_AGE_US before the block to MAX_FUTURE_US after it, or the
+      update reverts
     - Streams only move forward: a feed is stored only when its observation is
       newer than the stream's and its price is supported
     - decode() reads one feed of an update without verifying it, for quotes
@@ -17,10 +20,9 @@ Notable features are:
 
 @dev Channels: 1 real_time, 2 fixed_rate@50ms, 3 fixed_rate@200ms,
      4 fixed_rate@1000ms. Channels never share storage.
-     Delivery refuses a message from more than MAX_FUTURE_US ahead of the block
-     but sets no maximum age: an old observation is stored when it is newer
-     than its stream's. latest[feed id][channel] holds the newest report however
-     old it is, and each reader enforces its own maximum age.
+     The delivery window binds delivery only: latest[feed id][channel] holds
+     the newest report however old it grows afterwards, and each reader
+     enforces its own maximum age.
      Prices have 18 decimals in the feed's quote currency (1e18 = $1 for a USD
      feed). Times are Pyth's, in Unix microseconds.
 
@@ -65,8 +67,10 @@ MAX_UPDATE_BYTES: constant(uint256) = ENVELOPE_BYTES + MAX_PAYLOAD_BYTES  # 301
 EVM_MAGIC: constant(bytes4) = 0x2a22999a  # first 4 bytes of an EVM-format update
 PAYLOAD_MAGIC: constant(bytes4) = 0x93c7d375  # first 4 bytes of a payload
 
-# Newest admissible message, ahead of block.timestamp; readers bound the age
+# Delivery window around block.timestamp, both ends inclusive: the message time
+# and every observation time from MAX_AGE_US before to MAX_FUTURE_US after
 MAX_FUTURE_US: constant(uint256) = 6_000_000
+MAX_AGE_US: constant(uint256) = 60_000_000
 
 ################################################################
 #                          INTERFACES                          #
@@ -144,7 +148,9 @@ def deliver_report(_update: Bytes[MAX_UPDATE_BYTES]):
             is supported and newer than its stream
     @dev Send exactly verification_fee() as value: the bank could not take back
          the verifier's refund of an overpayment. An update carries one
-         channel's feeds; each channel's update is its own call.
+         channel's feeds; each channel's update is its own call. Reverts unless
+         the message and every feed are inside the delivery window, so a
+         transaction that waits too long to be mined reverts.
     @param _update Signed update, as Pyth's API returns it in the "evm" format
     """
     verifier: PythLazer = PythLazer(self.verifier)
@@ -165,15 +171,24 @@ def deliver_report(_update: Bytes[MAX_UPDATE_BYTES]):
     # dev: the verifier ignores bytes after the payload; refuse them, as decode() does
     assert len(_update) == ENVELOPE_BYTES + len(payload), "update length"
 
-    # 3. Payload, checked whole; a message from the future reverts
+    # 3. Payload, checked whole; its message must be inside the delivery window
     message_us: uint256 = 0
     channel: uint8 = 0
     feeds: DynArray[Feed, MAX_FEEDS] = []
     message_us, channel, feeds = self._parse_payload(payload)
-    assert message_us <= block.timestamp * 1_000_000 + MAX_FUTURE_US, "message time"
+    now_us: uint256 = block.timestamp * 1_000_000
+    assert message_us <= now_us + MAX_FUTURE_US, "message ahead"
+    # dev: added, not subtracted, so a small block.timestamp cannot underflow
+    assert message_us + MAX_AGE_US >= now_us, "message age"
 
-    # 4. Store each feed that is supported and newer than its stream
+    # 4. Store each feed that is supported and newer than its stream. Every feed
+    #    must be inside the delivery window too, skipped or not: one outside
+    #    reverts the update.
     for feed: Feed in feeds:
+        # dev: no observation is after its message (_parse_payload, step 2c), so
+        # the message check above already implies this first bound
+        assert feed.observation_us <= now_us + MAX_FUTURE_US, "observation ahead"
+        assert feed.observation_us + MAX_AGE_US >= now_us, "observation age"
         if feed.price == 0:
             continue  # unsupported
         if feed.observation_us <= self.latest[feed.feed_id][channel].observation_us:
@@ -210,7 +225,8 @@ def decode(_update: Bytes[MAX_UPDATE_BYTES], _feed_id: uint32, _channel: uint8) 
             Nothing is admitted or stored.
     @dev Reverts where delivery would on structure, and unless the update is on
          `_channel` and carries `_feed_id`. The price is 0 where delivery would
-         skip it as unsupported.
+         skip it as unsupported. No time is checked against the block, so an
+         update too old or too new to deliver still decodes.
          Envelope, from the start of the update; ranges are Python slices, so
          [0:4] is bytes 0 to 3:
              [0:4]      EVM magic          EVM_MAGIC
