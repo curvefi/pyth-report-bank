@@ -10,11 +10,11 @@ from scripts import deploy as script
 
 
 def config(**changes):
-    """The script's CONFIG on a port verifier; the deployer keeps ownership unless
-    `owner` is passed."""
+    """The script's CONFIG on a port verifier, deploying a new bank; the deployer keeps
+    ownership unless `owner` is passed."""
     verifier = PYTH.deploy(TEST_KEY.public_key.to_checksum_address(), FOREVER, FEE).address
     return SimpleNamespace(
-        **{**vars(script.CONFIG), "verifier": verifier, "owner": None, **changes}
+        **{**vars(script.CONFIG), "verifier": verifier, "owner": None, "bank": None, **changes}
     )
 
 

@@ -6,10 +6,7 @@ any number of contracts can read the stored prices.
 
 Deployed on Ethereum at
 [`0x76216954BE01eECdC0D7b00cd8bb72C2e28F0da7`](https://etherscan.io/address/0x76216954BE01eECdC0D7b00cd8bb72C2e28F0da7#code)
-(2026-11-13), owned by the YieldBasis DAO. The bank at
-[`0xa7E5337FfC8a2D08175ff3a5C99D6B043a944355`](https://etherscan.io/address/0xa7E5337FfC8a2D08175ff3a5C99D6B043a944355#code)
-(2026-11-12) is an earlier version that also stored Pyth's EMA price and had `deliver_batch`; it is
-no longer used.
+(2026-11-13), owned by the YieldBasis DAO.
 
 ```
 latest[feed_id][channel] = Report(price, observation_us)
@@ -112,7 +109,9 @@ verifier. The real run signs as the deployer `0xb101b2b0aa02b7167D238B98dc1B0b04
 opens only with a YubiKey touch and then the keystore password (`scripts/yubi_deployers.py`, a
 verbatim copy from the yubi-deployers project; it needs `age` and `age-plugin-yubikey`). It moves
 ownership to the YieldBasis DAO `0x42F2A41A0D0e65A440813190880c8a65124895Fa` (`CONFIG.owner`), and
-verifies the source on Etherscan when `ETHERSCAN_API_KEY` is set.
+verifies the source on Etherscan when `ETHERSCAN_API_KEY` is set. While `CONFIG.bank` holds the
+deployed bank's address, both runs check that bank instead of deploying another; set it to `None`
+to deploy a new one.
 
 ## Submit
 

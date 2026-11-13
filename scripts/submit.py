@@ -31,9 +31,7 @@ from scripts.lib import connect, mode, plain_account
 CONFIG = SimpleNamespace(
     rpc_url=os.environ.get("ETH_RPC_URL"),
     chain_id=1,
-    # PythReportBank, deployed 2026-11-13. The earlier bank at 0xa7E5337F...4355 takes
-    # the EMA price too and refuses these updates.
-    bank="0x76216954BE01eECdC0D7b00cd8bb72C2e28F0da7",
+    bank="0x76216954BE01eECdC0D7b00cd8bb72C2e28F0da7",  # PythReportBank, deployed 2026-11-13
     key="WEB3_TESTNET_PK",  # environment variable holding the sender's plain private key
     sender="0x73241E98090042A718f7eb1AF07FAD27ff09A3F3",  # its address; the dry run sends from it
     channel=pyth.CHANNEL,

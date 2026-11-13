@@ -7,8 +7,9 @@ Variables come from the environment or .env. Both runs deploy the bank and read 
 code and every parameter. The dry run then delivers a live BTC/USD + ETH/USD update
 through Pyth's deployed verifier (when PYTH_API_KEY is set) and checks the stored prices
 against Pyth's own parse. The real run moves ownership to CONFIG.owner if it is set, and
-verifies the source on Etherscan when ETHERSCAN_API_KEY is set. To resume an interrupted
-real run without redeploying, set CONFIG.bank to the address it printed.
+verifies the source on Etherscan when ETHERSCAN_API_KEY is set. With CONFIG.bank set, both
+runs check that deployment, and finish its handover and verification, instead of deploying;
+set it to None to deploy a new bank.
 """
 
 import os
@@ -33,7 +34,7 @@ CONFIG = SimpleNamespace(
     # The YubiKey-held key ~/.config/eth/<deployer>.json.age signs; the dry run deploys from it.
     deployer="0xb101b2b0aa02b7167D238B98dc1B0b0404a760E8",
     owner="0x42F2A41A0D0e65A440813190880c8a65124895Fa",  # YieldBasis DAO; None keeps the deployer.
-    bank=None,  # Resume: the address of an earlier deployment.
+    bank="0x76216954BE01eECdC0D7b00cd8bb72C2e28F0da7",  # deployed 2026-11-13; None deploys anew
 )
 
 BANK = boa.load_partial(str(ROOT / "contracts" / "PythReportBank.vy"))
