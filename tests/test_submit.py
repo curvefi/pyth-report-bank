@@ -12,15 +12,15 @@ CFG = SimpleNamespace(**{**vars(script.CONFIG), "feeds": {"BTC/USD": BTC, "ETH/U
 
 
 def response(feeds):
-    """Pyth's response shape for a test-signed update of `feeds`; a 0 EMA mantissa is
+    """Pyth's response shape for a test-signed update of `feeds`; a 0 mantissa is
     left out of the parse, as Pyth does."""
     data = payload(feeds)
     parsed = []
-    for feed_id, mantissa, exponent, observation_us, ema in feeds:
-        entry = {"priceFeedId": feed_id, "price": str(mantissa), "exponent": exponent}
+    for feed_id, mantissa, exponent, observation_us in feeds:
+        entry = {"priceFeedId": feed_id, "exponent": exponent}
         entry["feedUpdateTimestamp"] = observation_us
-        if ema:
-            entry["emaPrice"] = str(ema)
+        if mantissa:
+            entry["price"] = str(mantissa)
         parsed.append(entry)
     message_us = max(entry[3] for entry in feeds)
     return {
@@ -30,11 +30,11 @@ def response(feeds):
 
 
 def test_submit_stores_then_sends_nothing_older(bank, capsys):
-    # ETH without an EMA price: the bank keeps its report, BTC is still stored.
-    update = response([feed(BTC, 70_000 * WAD), feed(ETH, 2_000 * WAD, ema_price=0)])
+    # ETH without a price: the bank keeps its report, BTC is still stored.
+    update = response([feed(BTC, 70_000 * WAD), (ETH, 0, -8, now_us())])
     assert script.submit(bank, CFG, update, real=False)
     assert bank.latest(BTC, CHANNEL) == pyth.reports(update)[BTC]
-    assert bank.latest(ETH, CHANNEL) == (0, 0, 0)
+    assert bank.latest(ETH, CHANNEL) == (0, 0)
     assert "empty" in capsys.readouterr().out  # ETH's stream was never written
     # The same update again holds nothing newer: no transaction.
     assert not script.submit(bank, CFG, update, real=False)
@@ -43,7 +43,7 @@ def test_submit_stores_then_sends_nothing_older(bank, capsys):
 
 def test_submit_sends_nothing_the_bank_would_skip(bank):
     # Supported except for the exponent, which the bank refuses outside [-18, 0].
-    update = response([(BTC, 7, 1, now_us(), 7), (ETH, 2, 1, now_us(), 2)])
+    update = response([(BTC, 7, 1, now_us()), (ETH, 2, 1, now_us())])
     assert script.newer_reports(bank, CFG, update) == {}
     assert not script.submit(bank, CFG, update, real=False)
 
@@ -53,9 +53,7 @@ def test_a_newer_report_from_another_sender_is_not_a_failure(bank, capsys):
     newer = script.newer_reports(bank, CFG, ours)
     # Another sender stores later observations while ours is pending; the bank skips ours.
     later = now_us() + 1_000_000
-    bank.deliver_single_report(
-        update([feed(BTC, 71_000 * WAD, later)], message_us=later), value=FEE
-    )
+    bank.deliver_report(update([feed(BTC, 71_000 * WAD, later)], message_us=later), value=FEE)
     script.deliver(bank, CFG, ours, newer, real=False)
     out = capsys.readouterr().out
     assert "newer report from another sender" in out

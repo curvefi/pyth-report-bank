@@ -31,7 +31,9 @@ from scripts.lib import connect, mode, plain_account
 CONFIG = SimpleNamespace(
     rpc_url=os.environ.get("ETH_RPC_URL"),
     chain_id=1,
-    bank="0xa7E5337FfC8a2D08175ff3a5C99D6B043a944355",  # PythReportBank, deployed 2026-11-12
+    # PythReportBank without EMA prices: set once deployed. The bank at 0xa7E5337F...4355
+    # (2026-11-12) takes the EMA price too and refuses these updates.
+    bank=None,
     key="WEB3_TESTNET_PK",  # environment variable holding the sender's plain private key
     sender="0x73241E98090042A718f7eb1AF07FAD27ff09A3F3",  # its address; the dry run sends from it
     channel=pyth.CHANNEL,
@@ -44,7 +46,7 @@ MAX_FUTURE_US = 6_000_000  # the bank refuses a message further ahead of its blo
 
 def newer_reports(bank, cfg, response):
     """{feed id: report} of the feeds the bank will store: supported (pyth.reports gives
-    both prices 0 otherwise) and observed after the stream's report."""
+    the price 0 otherwise) and observed after the stream's report."""
     reports = pyth.reports(response)
     missing = [name for name, feed_id in cfg.feeds.items() if feed_id not in reports]
     if missing:
@@ -91,7 +93,7 @@ def deliver(bank, cfg, response, newer, real):
         # A fork's clock stands still at its block.
         message_s = -(-message_us // 1_000_000)
         boa.env.evm.patch.timestamp = max(boa.env.evm.patch.timestamp, message_s)
-    bank.deliver_single_report(pyth.update_bytes(response), value=bank.verification_fee())
+    bank.deliver_report(pyth.update_bytes(response), value=bank.verification_fee())
     for name, feed_id in cfg.feeds.items():
         if feed_id in newer:
             stored = read(bank, cfg, feed_id, newer[feed_id], real)
@@ -104,12 +106,9 @@ def deliver(bank, cfg, response, newer, real):
         else:
             stored = bank.latest(feed_id, cfg.channel)
             state = "kept" if stored[1] else "empty"
-        price, observation_us, ema_price = stored
+        price, observation_us = stored
         observed = datetime.fromtimestamp(observation_us / 1e6, UTC).strftime("%H:%M:%S")
-        print(
-            f"{name:10s} price {price / 1e18:>12,.2f}  EMA {ema_price / 1e18:>12,.2f}"
-            f"  observed {observed} UTC  {state}"
-        )
+        print(f"{name:10s} price {price / 1e18:>12,.2f}  observed {observed} UTC  {state}")
 
 
 def submit(bank, cfg, response, real):
@@ -125,6 +124,8 @@ def submit(bank, cfg, response, real):
 
 def main(args, cfg=CONFIG):
     real = mode(args)
+    if not cfg.bank:
+        sys.exit("CONFIG.bank is not set: deploy the bank first")
     if not pyth.api_key():
         sys.exit("PYTH_API_KEY is not set")
     connect(cfg.rpc_url, cfg.chain_id, real, cfg.sender, load=lambda: plain_account(cfg.key))

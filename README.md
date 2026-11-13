@@ -1,30 +1,28 @@
 # report-bank
 
 `PythReportBank` stores the newest verified [Pyth Lazer](https://docs.pyth.network/price-feeds/pro)
-price and EMA price of every stream. A stream is one feed on one channel. Anyone can deliver a signed update, and
+price of every stream. A stream is one feed on one channel. Anyone can deliver a signed update, and
 any number of contracts can read the stored prices.
 
-Deployed on Ethereum at
-[`0xa7E5337FfC8a2D08175ff3a5C99D6B043a944355`](https://etherscan.io/address/0xa7E5337FfC8a2D08175ff3a5C99D6B043a944355#code),
-owned by the YieldBasis DAO.
+Not deployed yet in this form. The bank at
+[`0xa7E5337FfC8a2D08175ff3a5C99D6B043a944355`](https://etherscan.io/address/0xa7E5337FfC8a2D08175ff3a5C99D6B043a944355#code)
+(2026-11-12) is an earlier version that also stored Pyth's EMA price and had `deliver_batch`; it is
+no longer used.
 
 ```
-latest[feed_id][channel] = Report(price, observation_us, ema_price)
+latest[feed_id][channel] = Report(price, observation_us)
 ```
 
-Both prices have 18 decimals (1e18 = $1); the EMA price is Pyth's own moving average and shares the
-price's exponent. The observation time is Pyth's, in microseconds. Each field has its own storage
-slot: unpacked storage costs more gas but is simpler to read. The EMA price comes last, so a reader
-that decodes only `(price, observation_us)` still works.
+The price has 18 decimals (1e18 = $1). The observation time is Pyth's, in microseconds. The two
+fields have a storage slot each: unpacked storage costs more gas but is simpler to read.
 
 ## Contract
 
 | Call | What it does |
 |---|---|
-| `deliver_single_report(update)` | Takes a signed update of 1 to 8 feeds on one channel, with exactly `verification_fee()` as the value. Pyth's verifier checks the signature. Each feed is stored if it is newer than its stream. |
-| `deliver_batch(updates)` | Takes up to 8 signed updates, for example on several channels or signed separately, with exactly `verification_fee()` per update as the value. It handles them in order, as that many single deliveries, and a malformed or unverified update reverts the whole batch. An empty batch reverts. |
-| `latest(feed_id, channel)` | The public mapping itself: `(price, observation_us, ema_price)` of the stream's newest report, or `(0, 0, 0)` before the first one. |
-| `decode(update, feed_id, channel)` | Converts one feed of an update to `(price, observation_us, ema_price)`, for quotes. **Not protected:** it checks the structure as delivery does but not the signature, so anyone can pass any price. Never use its result to authorize anything; `latest` holds verified prices. |
+| `deliver_report(update)` | Takes a signed update of 1 to 8 feeds on one channel, with exactly `verification_fee()` as the value. Pyth's verifier checks the signature. Each feed is stored if it is newer than its stream. Updates on several channels take a call each. |
+| `latest(feed_id, channel)` | The public mapping itself: `(price, observation_us)` of the stream's newest report, or `(0, 0)` before the first one. |
+| `decode(update, feed_id, channel)` | Converts one feed of an update to `(price, observation_us)`, for quotes. **Not protected:** it checks the structure as delivery does but not the signature, so anyone can pass any price. Never use its result to authorize anything; `latest` holds verified prices. |
 | `verification_fee()` | The verifier's fee, in wei. |
 | `set_verifier(verifier)` | Replaces the verifier. Owner only. The stored prices are kept. |
 
@@ -32,25 +30,23 @@ Delivery rules:
 
 - **Reverts:** a malformed update reverts as a whole. That covers bad magic, a feed count outside
   1 to 8, a wrong length (including bytes after the payload, which Pyth's verifier would ignore),
-  a duplicate feed, properties other than price, exponent, EMA price and feed update time in that
-  order (Pyth writes them in the order requested, so `pyth.py` asks in this order), a
+  a duplicate feed, properties other than price, exponent and feed update time in that order
+  (Pyth writes them in the order requested, so `pyth.py` asks in this order), a
   message time more than 6 s ahead of the block, and an observation time later than its message
   time. Every feed is checked, including those that will be skipped.
 - **Skips:** a feed is skipped, not stored, when its observation is not newer than the stream's, or
-  its price or EMA price is one the bank does not store (a mantissa of 0 or less, or an exponent
-  outside [-18, 0]). Its stream keeps its whole previous report, and the update's other feeds are
-  still stored.
+  its price is one the bank does not store (a mantissa of 0 or less, or an exponent outside
+  [-18, 0]). Its stream keeps its previous report, and the update's other feeds are still stored.
 - **Channels:** channels never share storage. Reports on one channel cannot displace another
   channel's.
 - **Freshness:** the bank sets no maximum age. An old observation is stored when it is newer than
   its stream's, so a late keeper transaction still lands. `latest(feed_id, channel)` returns the
   newest report however old it is, so each reader checks the age it accepts.
-- **Fees:** the value must be exactly `verification_fee()` per update, or the call reverts. The bank
+- **Fees:** the value must be exactly `verification_fee()`, or the call reverts. The bank
   cannot take a refund, so an overpayment would otherwise stay with Pyth's verifier.
 
-This is twocrypto-ng's `contracts/main/PythReportBank.vy` without its own moving averages; it stores
-Pyth's EMA price instead. The `latest` and `decode` selectors and their first two returned fields are
-unchanged, so `YBOraclizedPolicy` reads it as before.
+This is twocrypto-ng's `contracts/main/PythReportBank.vy` without its moving averages. `latest` and
+`decode` return `(price, observation_us)`, as there.
 
 ## Feeds
 
@@ -78,13 +74,12 @@ uv run pytest
 ```
 
 - **`tests/test_unit.py`:** updates built in Python and signed with a test key. Covers delivery,
-  the future-message check, streams, price scaling, malformed input, batches, decoding and governance.
+  the future-message check, streams, price scaling, malformed input, fees, decoding and governance.
 - **`tests/test_integration.py`:** a real signed BTC/USD + ETH/USD update recorded from Pyth
   (`tests/fixtures/btc_eth_usd.json`), replayed with the block clock set to its message time. The
   stored prices must equal Pyth's own parse. Tampering, a foreign signer, an expired signer and an
-  early delivery are refused; a delivery an hour late is still stored. Whenever `PYTH_API_KEY` is set, a live test also
-  fetches one update of both feeds, then each feed signed separately, and delivers those two as a
-  batch.
+  early delivery are refused; a delivery an hour late is still stored. Whenever `PYTH_API_KEY` is
+  set, a live test also fetches and delivers one update of both feeds.
 
 Both suites verify signatures with `tests/mocks/PythLazer.vy`. It is a Vyper port of `verifyUpdate`
 from Pyth's [PythLazer.sol](https://github.com/pyth-network/pyth-crosschain/blob/main/lazer/contracts/evm/src/PythLazer.sol)
@@ -127,4 +122,5 @@ uv run python scripts/submit.py real   # real transaction
 Fetches one signed update of BTC, WBTC, tBTC, cbBTC and ETH in USD and delivers it to the deployed
 bank, signed by the plain key in `WEB3_TESTNET_PK` (delivery needs no privileges). Nothing is sent
 when no feed is newer than the bank's report, and every stored report is checked against Pyth's
-parse. A first delivery of all five costs about 400,000 gas.
+parse. Measured on a fork through Pyth's verifier, delivering all five costs about 266,000 gas the
+first time and about 95,000 gas later, before the transaction's base and calldata gas.

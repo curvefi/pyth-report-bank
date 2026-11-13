@@ -36,7 +36,7 @@ def fetch(feed_ids=None, channel=CHANNEL) -> dict:
         "priceFeedIds": list(FEEDS.values() if feed_ids is None else feed_ids),
         # Exactly the properties the bank decodes, in this order: Pyth writes
         # them in the order requested.
-        "properties": ["price", "exponent", "emaPrice", "feedUpdateTimestamp"],
+        "properties": ["price", "exponent", "feedUpdateTimestamp"],
         "formats": ["evm"],
         "channel": CHANNELS[channel],
         "jsonBinaryEncoding": "hex",
@@ -60,19 +60,17 @@ def update_bytes(response: dict) -> bytes:
 
 
 def reports(response: dict) -> dict:
-    """{feed id: (price, observation us, EMA price)}, prices in 1e18, from Pyth's own
-    parse, as the bank decodes them: both prices are 0, and the bank skips the feed,
-    unless both mantissas are positive and the exponent is in [-18, 0]. Pyth's parse
-    leaves out a price it does not have."""
+    """{feed id: (price, observation us)}, the price in 1e18, from Pyth's own parse,
+    as the bank decodes it: the price is 0, and the bank skips the feed, unless its
+    mantissa is positive and its exponent is in [-18, 0]. Pyth's parse leaves out a
+    price it does not have."""
     parsed = {}
     for entry in response["parsed"]["priceFeeds"]:
         price = int(entry.get("price", 0))
-        ema = int(entry.get("emaPrice", 0))
         exponent = entry["exponent"]
-        if price <= 0 or ema <= 0 or not -18 <= exponent <= 0:
-            price = ema = exponent = 0
-        scale = 10 ** (18 + exponent)
-        parsed[entry["priceFeedId"]] = (price * scale, entry["feedUpdateTimestamp"], ema * scale)
+        if price <= 0 or not -18 <= exponent <= 0:
+            price = exponent = 0
+        parsed[entry["priceFeedId"]] = (price * 10 ** (18 + exponent), entry["feedUpdateTimestamp"])
     return parsed
 
 

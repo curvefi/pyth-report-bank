@@ -83,12 +83,12 @@ def deliver_live(bank):
     # window; on mainnet the delivery lands in a block after the message.
     message_s = -(-int(response["parsed"]["timestampUs"]) // 1_000_000)
     boa.env.evm.patch.timestamp = max(boa.env.evm.patch.timestamp, message_s)
-    bank.deliver_single_report(pyth.update_bytes(response), value=bank.verification_fee())
+    bank.deliver_report(pyth.update_bytes(response), value=bank.verification_fee())
     for feed_id, report in pyth.reports(response).items():
         stored = bank.latest(feed_id, pyth.CHANNEL)
         if stored != report:
             raise RuntimeError(f"feed {feed_id}: stored {stored}, Pyth parsed {report}")
-        print(f"feed {feed_id}: price {report[0] / 1e18:,.2f}, EMA {report[2] / 1e18:,.2f}, stored")
+        print(f"feed {feed_id}: price {report[0] / 1e18:,.2f}, stored")
 
 
 def verify(bank, cfg):
