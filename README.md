@@ -4,7 +4,9 @@
 price of every stream. A stream is one feed on one channel. Anyone can deliver a signed update, and
 any number of contracts can read the stored prices.
 
-Not deployed yet in this form. The bank at
+Deployed on Ethereum at
+[`0x76216954BE01eECdC0D7b00cd8bb72C2e28F0da7`](https://etherscan.io/address/0x76216954BE01eECdC0D7b00cd8bb72C2e28F0da7#code)
+(2026-11-13), owned by the YieldBasis DAO. The bank at
 [`0xa7E5337FfC8a2D08175ff3a5C99D6B043a944355`](https://etherscan.io/address/0xa7E5337FfC8a2D08175ff3a5C99D6B043a944355#code)
 (2026-11-12) is an earlier version that also stored Pyth's EMA price and had `deliver_batch`; it is
 no longer used.
@@ -122,5 +124,5 @@ uv run python scripts/submit.py real   # real transaction
 Fetches one signed update of BTC, WBTC, tBTC, cbBTC and ETH in USD and delivers it to the deployed
 bank, signed by the plain key in `WEB3_TESTNET_PK` (delivery needs no privileges). Nothing is sent
 when no feed is newer than the bank's report, and every stored report is checked against Pyth's
-parse. Measured on a fork through Pyth's verifier, delivering all five costs about 266,000 gas the
-first time and about 95,000 gas later, before the transaction's base and calldata gas.
+parse. The first delivery of all five cost 290,712 gas on mainnet; on a fork, later ones take about
+95,000 gas of execution, plus about 25,000 for the transaction's base and calldata.
